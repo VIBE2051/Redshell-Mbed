@@ -41,10 +41,10 @@ BufferedSerial pc(USBTX, USBRX);
 Ticker encoderTicker;
 
 // Variables for encoder state
-volatile int position = 0;
+volatile long position = 0;
 volatile int lastEncoded = 0;
 volatile double speed = 0.0;
-volatile int lastPosition = 0;
+volatile long lastPosition = 0;
 volatile long lastTime = 0;
 
 // Quadrature Encoder State Table
@@ -56,6 +56,7 @@ const int8_t ENCODER_STATE_TABLE[16] = {
 };
 
 // Function to update the encoder position
+/*
 void updateEncoder() {
     //int MSB = inputA1.read();
     //int LSB = inputB1.read();
@@ -76,6 +77,14 @@ void updateEncoder() {
         }
     }
     //lastEncoded = encoded;
+}
+*/
+void updateMotorPosition() {
+    if (inputA1.read() != inputB1.read()) {
+        position++;
+    } else {
+        position--;
+    }
 }
 // Function to calculate speed
 void calculateSpeed() {
@@ -106,10 +115,10 @@ int main() {
     inputB2.mode(PullDown);
 
     // Attach the updateEncoder function to be called on the rising edge of inputA
-    inputA1.rise(&updateEncoder);
-    inputA1.fall(&updateEncoder);
-    inputB1.rise(&updateEncoder);
-    inputB1.fall(&updateEncoder);
+    inputA1.rise(&updateMotorPosition);
+    inputA1.fall(&updateMotorPosition);
+    inputB1.rise(&updateMotorPosition);
+    inputB1.fall(&updateMotorPosition);
 
     // Attach the calculateSpeed function to be called every 100ms
     //encoderTicker.attach(&calculateSpeed, 100ms);
@@ -140,7 +149,7 @@ int main() {
         calculateSpeed();
         // 13-bit, sign extended values.
         //printf("%i, %i, %i\n", (int16_t)readings[0], (int16_t)readings[1], (int16_t)readings[2];
-        printf("Position: %d,\n Last Position: %d,\n Speed: %d counts/s\n", position, (int16_t)lastPosition, (int16_t)speed);
+        printf("Position: %d, Last Position: %d, Speed: %d counts/s\n", position, (int16_t)lastPosition, (int16_t)speed);
     }
 }
 

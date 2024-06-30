@@ -7,6 +7,10 @@
  */
  
 #include "ADXL345.h"
+#include "encoder.h"
+#include "imu.h"
+#include "power.h"
+#include "receive.h"
 #include "mbed.h"
 #include <cmath>
 #include <cstdint>
@@ -25,20 +29,30 @@ DigitalOut IN2(PC_6);
 DigitalOut IN3(PC_5);
 DigitalOut IN4(PA_12);
 
-ADXL345 accelerometer(PA_7, PA_6, PA_5, PB_6); // mosi, miso, sck, cs
+ADXL345 accelerometer(PA_7, PA_6, PA_5, PC_7); // mosi, miso, sck, cs
 BufferedSerial pc(USBTX, USBRX);
+PacketInfo encoderSpeed, imuData, receivePacket;
+Packet encoderPack, imuPack, receivepack;
 
 // Variables for encoder state
 volatile uint32_t position1_ticks = 0;
 volatile uint32_t position2_ticks = 0;
 
+const int BUFFER_SIZE = 256;
+char buffer[BUFFER_SIZE];
+int buffer_index = 0;
+
 void updateMotorPosition1();
 void updateMotorPosition2();
 void updateSpeed(double &speed1_rpm, double &speed2_rpm);
+void setSpeedM1M2(char input[]);
+void readInput();
+int stringToInt(char data[]);
 void motorA(float duty, int dir);
 void motorB(float duty, int dir);
 
 int main() {
+    pc.set_blocking(true); // Set non-blocking mode
     // Initialising Button pull direction
     inputA1.mode(PullDown);
     inputB1.mode(PullDown);
@@ -78,9 +92,17 @@ int main() {
 
         double speed1_rpm, speed2_rpm;
         updateSpeed(speed1_rpm, speed2_rpm);
+        //printf("Enter a string (press Enter to send):\n");
+        imuData = transform_imu_data(readings[0], readings[1], readings[2]);
+        encoderSpeed = transform_encoder_data(speed1_rpm, speed2_rpm);
+        imuPack = info_to_packet(imuData);
+        encoderPack = info_to_packet(encoderSpeed);
+        //readInput();
 
-        //std::printf("%i, %i, %i, Motor Right: %ld, Motor Left %ld\n", (int16_t)readings[0], (int16_t)readings[1], (int16_t)readings[2], position1, position2);
-        std::printf("Speed of Motor 1: %f, Speed of Motor 2: %f\n", speed1_rpm, speed2_rpm);
+
+
+        std::printf("%i, %i, %i\n", (int16_t)readings[0], (int16_t)readings[1], (int16_t)readings[2]);
+        //std::printf("Speed of Motor 1: %f, Speed of Motor 2: %f\n", speed1_rpm, speed2_rpm);
     }
 }
 
@@ -120,6 +142,58 @@ void updateSpeed(double &speed1_rpm, double &speed2_rpm) {
     lastPosition1_ticks = position1_ticks;
     lastPosition2_ticks = position2_ticks;
     lastTime_us = currentTime_us;
+}
+
+void readInput() {
+    while (!pc.readable()) {
+        char c;
+        if (pc.read(&c, 1)) {
+            // Check for end of line
+            if (c == '\n' || c == '\r') {
+                buffer[buffer_index] = '\0'; // Null-terminate the string
+                printf("Received string: %s\n", buffer);
+                setSpeedM1M2(buffer);
+                buffer_index = 0; // Reset buffer index
+            } else {
+                if (buffer_index < BUFFER_SIZE - 1) {
+                    buffer[buffer_index++] = c; // Add character to buffer
+                } else {
+                    // Buffer overflow handling
+                    printf("Buffer overflow, clearing buffer\n");
+                    buffer_index = 0;
+                }
+            }
+        }
+    }
+}
+
+void setSpeedM1M2(char input[]) {
+    float duty = input[3];
+    if (input[0] == '=') {
+        if (input[1] == 'L') {
+            if (input[2] == 'F') {
+                motorA(stringToInt(input), 1);
+            } else if (input[2] == 'B') {
+                motorA(stringToInt(input), -1);
+            }
+        } else if (input[1] == 'R') {
+            if (input[2] == 'F') {
+                motorB(stringToInt(input), 1);
+            } else if (input[2] == 'B') {
+                motorB(stringToInt(input), -1);
+            }
+        }
+    }
+}
+
+int stringToInt(char data[]) {
+    char *ptr;
+    char num[3];
+    num[0] = data[2];
+    num[1] = data[3];
+    num[2] = '0';
+    long int value = strtol(num, &ptr, 10);
+    return value; 
 }
 
 void motorA(float duty, int dir) {

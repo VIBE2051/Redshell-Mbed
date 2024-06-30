@@ -16,17 +16,6 @@
 #define CRC16 0x8005
 #define MAX_DATA_SIZE 8
 
-#define FIRST_BYTE_SHIFT (3 * 8)
-#define SECOND_BYTE_SHIFT (2 * 8)
-#define THIRD_BYTE_SHIFT (1 * 8)
-
-typedef struct {
-    uint32_t ff_bytes; // First Four Bytes 
-    uint32_t sf_bytes; // Second Four Bytes 
-    uint32_t lf_bytes; // Last Four Bytes 
-}Packet;
-
-
 typedef struct {
     uint8_t start; 
     uint8_t id;
@@ -76,17 +65,28 @@ uint16_t gen_crc16(const uint8_t *data, uint16_t size){
     return crc;
 }
 
-Packet info_to_packet(PacketInfo packet_info) {
-    Packet packet;
-    packet.ff_bytes = (packet_info.start << FIRST_BYTE_SHIFT) \
-    | (packet_info.id << SECOND_BYTE_SHIFT) | (packet_info.data[0] << THIRD_BYTE_SHIFT) | (packet_info.data[1]);
-   
-    packet.sf_bytes = (packet_info.data[2] << FIRST_BYTE_SHIFT) \
-    | (packet_info.data[3] << SECOND_BYTE_SHIFT) | (packet_info.data[4] << THIRD_BYTE_SHIFT) | (packet_info.data[5]);
-   
-    packet.lf_bytes = (packet_info.data[6] << FIRST_BYTE_SHIFT) \
-    | (packet_info.data[7] << SECOND_BYTE_SHIFT) | packet_info.crc;
+void serialize(PacketInfo packet, uint8_t* serial_packet) {
+    serial_packet[0] = packet.start;
+    serial_packet[1] = packet.id;
 
-    return packet;
+    for (int i = 0; i < MAX_DATA_SIZE; i++)
+    {
+        serial_packet[2 + i] = packet.data[i];
+    }
+
+    serial_packet[2 + MAX_DATA_SIZE] = (packet.crc & 0xFF);
+    serial_packet[2 + MAX_DATA_SIZE + 1] = ((packet.crc >> 8) & 0xFF);
+}
+
+void deserialize(PacketInfo packet, uint8_t* serial_packet) {
+    packet.start = serial_packet[0];
+    packet.id = serial_packet[1];
+
+    for (int i = 0; i < MAX_DATA_SIZE; i++)
+    {
+        packet.data[i] = serial_packet[2 + i];
+    }
+
+    packet.crc = serial_packet[2 + MAX_DATA_SIZE] | (packet.crc << 8);
 }
 #endif 

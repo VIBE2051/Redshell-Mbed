@@ -24,7 +24,7 @@ InterruptIn inputB2(PA_10);
 
 PwmOut enableA(PB_10);
 PwmOut enableB(PB_4);
-DigitalOut IN1(PC_8);
+DigitalOut IN1(PA_11);
 DigitalOut IN2(PC_6);
 DigitalOut IN3(PC_5);
 DigitalOut IN4(PA_12);
@@ -90,6 +90,12 @@ int main() {
         // 13-bit, sign extended values.
         accelerometer.getOutput(readings);
 
+        motorA(1.0, 1);
+        motorB(1.0, 1);
+
+        ThisThread::sleep_for(500ms);
+        //printf("here\n");
+
         double speed1_rpm, speed2_rpm;
         updateSpeed(speed1_rpm, speed2_rpm);
         //printf("Enter a string (press Enter to send):\n");
@@ -101,7 +107,7 @@ int main() {
 
 
 
-        std::printf("%i, %i, %i\n", (int16_t)readings[0], (int16_t)readings[1], (int16_t)readings[2]);
+        //std::printf("%i, %i, %i\n", (int16_t)readings[0], (int16_t)readings[1], (int16_t)readings[2]);
         //std::printf("Speed of Motor 1: %f, Speed of Motor 2: %f\n", speed1_rpm, speed2_rpm);
     }
 }

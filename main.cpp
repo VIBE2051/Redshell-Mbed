@@ -8,9 +8,9 @@
  
 #include "ADXL345.h"
 #include "encoder.h"
-#include "imu.h"
-#include "power.h"
-#include "receive.h"
+#include "redshell_messages/imu.h"
+#include "redshell_messages/power.h"
+#include "redshell_messages/command.h"
 #include "mbed.h"
 #include <cmath>
 #include <cstdint>
@@ -31,8 +31,8 @@ DigitalOut IN4(PA_12);
 
 ADXL345 accelerometer(PA_7, PA_6, PA_5, PC_7); // mosi, miso, sck, cs
 BufferedSerial pc(USBTX, USBRX);
-PacketInfo encoderSpeed, imuData, receivePacket;
-Packet encoderPack, imuPack, receivepack;
+
+
 
 // Variables for encoder state
 volatile uint32_t position1_ticks = 0;
@@ -99,13 +99,19 @@ int main() {
         double speed1_rpm, speed2_rpm;
         updateSpeed(speed1_rpm, speed2_rpm);
         //printf("Enter a string (press Enter to send):\n");
-        imuData = transform_imu_data(readings[0], readings[1], readings[2]);
-        encoderSpeed = transform_encoder_data(speed1_rpm, speed2_rpm);
-        imuPack = info_to_packet(imuData);
-        encoderPack = info_to_packet(encoderSpeed);
+        // imuData = transform_imu_data(readings[0], readings[1], readings[2]);
+        // encoderSpeed = transform_encoder_data(speed1_rpm, speed2_rpm);
+        // imuPack = info_to_packet(imuData);
+        // encoderPack = info_to_packet(encoderSpeed);
         //readInput();
 
+        PacketInfo imuPacket = msg_imu_encode(readings[0], readings[1], readings[2]);
+        uint8_t imuData[12];
+        serialize(imuPacket, imuData);
 
+        for (int i = 0; i < sizeof(imuData); i++) {
+            std::printf("%02X", imuData[i]);
+        }
 
         //std::printf("%i, %i, %i\n", (int16_t)readings[0], (int16_t)readings[1], (int16_t)readings[2]);
         //std::printf("Speed of Motor 1: %f, Speed of Motor 2: %f\n", speed1_rpm, speed2_rpm);

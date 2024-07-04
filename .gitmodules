@@ -1,0 +1,3 @@
+[submodule "redshell-messages"]
+	path = redshell-messages
+	url = https://github.com/TTMead/redshell-messages.git

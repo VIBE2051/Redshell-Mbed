@@ -7,10 +7,11 @@
  */
  
 #include "ADXL345.h"
-#include "encoder.h"
-#include "redshell_messages/imu.h"
-#include "redshell_messages/power.h"
-#include "redshell_messages/command.h"
+#include "redshell-messages/include/redshell/encoder.h"
+#include "redshell-messages/include/redshell/imu.h"
+#include "redshell-messages/include/redshell/power.h"
+#include "redshell-messages/include/redshell/command.h"
+
 #include "mbed.h"
 #include <cmath>
 #include <cstdint>
@@ -32,7 +33,9 @@ DigitalOut IN4(PA_12);
 ADXL345 accelerometer(PA_7, PA_6, PA_5, PC_7); // mosi, miso, sck, cs
 BufferedSerial pc(USBTX, USBRX);
 
+Thread IMU, ENCODER, COMMAND;
 
+Mutex mutex;
 
 // Variables for encoder state
 volatile uint32_t position1_ticks = 0;
@@ -42,6 +45,9 @@ const int BUFFER_SIZE = 256;
 char buffer[BUFFER_SIZE];
 int buffer_index = 0;
 
+void thread_imuSend();
+void thread_encoderSend();
+void thread_commandReceive();
 void updateMotorPosition1();
 void updateMotorPosition2();
 void updateSpeed(double &speed1_rpm, double &speed2_rpm);
@@ -53,6 +59,13 @@ void motorB(float duty, int dir);
 
 int main() {
     pc.set_blocking(true); // Set non-blocking mode
+    pc.set_baud(19200);
+    pc.set_format(
+        8,                      // Number of bits (5, 6, 7, 8)
+        BufferedSerial::None,   // Parity (None, Odd, Even)
+        1                       // Number of stop bits (1 or 2)
+    );
+
     // Initialising Button pull direction
     inputA1.mode(PullDown);
     inputB1.mode(PullDown);
@@ -66,9 +79,6 @@ int main() {
     // Initialising pwm pins
     enableA.period(0.001f); //Setting a period of 100ms
     enableB.period(0.001f);
-
-    // Initialising variables
-    int readings[3] = {0, 0, 0};
     
     printf("Starting ADXL345 test...\n");
     printf("Device ID is: 0x%02x\n", accelerometer.getDevId());
@@ -85,37 +95,60 @@ int main() {
     // Measurement mode.
     accelerometer.setPowerControl(0x08);
 
+    printf("Starting Threads...");
+    IMU.start(thread_imuSend);
+    ENCODER.start(thread_encoderSend);
+    COMMAND.start(thread_commandReceive);
+
     while (1) {
         ThisThread::sleep_for(100ms);
-        // 13-bit, sign extended values.
+        mutex.lock();
+        printf("Still here");
+        mutex.unlock();
+    }
+}
+
+void thread_imuSend() {
+    int readings[3] = {0, 0, 0};
+    while (true) {
         accelerometer.getOutput(readings);
-
-        motorA(1.0, 1);
-        motorB(1.0, 1);
-
-        ThisThread::sleep_for(500ms);
-        //printf("here\n");
-
-        double speed1_rpm, speed2_rpm;
-        updateSpeed(speed1_rpm, speed2_rpm);
-        //printf("Enter a string (press Enter to send):\n");
-        // imuData = transform_imu_data(readings[0], readings[1], readings[2]);
-        // encoderSpeed = transform_encoder_data(speed1_rpm, speed2_rpm);
-        // imuPack = info_to_packet(imuData);
-        // encoderPack = info_to_packet(encoderSpeed);
-        //readInput();
 
         PacketInfo imuPacket = msg_imu_encode(readings[0], readings[1], readings[2]);
         uint8_t imuData[12];
         serialize(imuPacket, imuData);
-
-        for (int i = 0; i < sizeof(imuData); i++) {
-            std::printf("%02X", imuData[i]);
-        }
-
-        //std::printf("%i, %i, %i\n", (int16_t)readings[0], (int16_t)readings[1], (int16_t)readings[2]);
-        //std::printf("Speed of Motor 1: %f, Speed of Motor 2: %f\n", speed1_rpm, speed2_rpm);
+        mutex.lock();
+        fwrite(imuData, 1, sizeof(imuData), stdout);
+        mutex.unlock();
+        ThisThread::sleep_for(100ms);
     }
+}
+
+void thread_encoderSend() {
+    double speed1_rpm, speed2_rpm;
+    while(true) {
+        updateSpeed(speed1_rpm, speed2_rpm);
+        PacketInfo encoderPacket = msg_encoder_encode(speed2_rpm, speed1_rpm);
+        uint8_t encodeData[12];
+        serialize(encoderPacket, encodeData);
+        mutex.lock();
+        fwrite(encodeData, 1, sizeof(encodeData), stdout);
+        mutex.unlock();
+        ThisThread::sleep_for(100ms);
+    }
+}
+
+void thread_commandReceive() {
+    uint32_t speed1, speed2;
+    uint8_t speedData[12];
+    while (true) {
+        PacketInfo commandPacket = msg_command_encode(speed1, speed2);
+        serialize(commandPacket, speedData);
+        mutex.lock();
+        fread(speedData, 1, sizeof(speedData), stdin);
+        mutex.unlock();
+        msg_command_decode(commandPacket, &speed1, &speed2);
+    }
+
 }
 
 void updateMotorPosition1() {

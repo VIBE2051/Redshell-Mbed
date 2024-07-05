@@ -321,6 +321,8 @@ BUILD\NUCLEO_L476RG\ARMC6\main.o: main.cpp \
   mbed-os\platform\include\platform\mbed_stats.h \
   mbed-os\platform\include\platform\Stream.h \
   mbed-os\platform\include\platform\FileLike.h \
-  redshell_messages\encoder.h redshell_messages\usb_protocol.h \
-  redshell_messages\imu.h redshell_messages\power.h \
-  redshell_messages\command.h
+  redshell-messages\include\redshell\encoder.h \
+  redshell-messages\include\redshell\redshell_messages.h \
+  redshell-messages\include\redshell\imu.h \
+  redshell-messages\include\redshell\power.h \
+  redshell-messages\include\redshell\command.h

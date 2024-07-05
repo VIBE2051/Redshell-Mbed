@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <algorithm>
 
 /////Pin allocations made specifically for NUCLEO-L476RG///////
 InterruptIn inputA1(PA_9);
@@ -35,7 +36,7 @@ BufferedSerial pc(USBTX, USBRX);
 
 Thread IMU, ENCODER, COMMAND;
 
-Mutex mutex;
+Mutex write_mutex;
 
 // Variables for encoder state
 volatile uint32_t position1_ticks = 0;
@@ -58,7 +59,7 @@ void motorA(float duty, int dir);
 void motorB(float duty, int dir);
 
 int main() {
-    pc.set_blocking(true); // Set non-blocking mode
+    pc.set_blocking(false); // Set non-blocking mode
     pc.set_baud(19200);
     pc.set_format(
         8,                      // Number of bits (5, 6, 7, 8)
@@ -77,7 +78,7 @@ int main() {
     inputA2.rise(&updateMotorPosition2);
     
     // Initialising pwm pins
-    enableA.period(0.001f); //Setting a period of 100ms
+    enableA.period(0.001f); //Setting a period of 1ms
     enableB.period(0.001f);
     
     printf("Starting ADXL345 test...\n");
@@ -102,9 +103,6 @@ int main() {
 
     while (1) {
         ThisThread::sleep_for(100ms);
-        mutex.lock();
-        printf("Still here");
-        mutex.unlock();
     }
 }
 
@@ -114,11 +112,11 @@ void thread_imuSend() {
         accelerometer.getOutput(readings);
 
         PacketInfo imuPacket = msg_imu_encode(readings[0], readings[1], readings[2]);
-        uint8_t imuData[12];
+        uint8_t imuData[REDSHELL_MESSAGE_SIZE];
         serialize(imuPacket, imuData);
-        mutex.lock();
-        fwrite(imuData, 1, sizeof(imuData), stdout);
-        mutex.unlock();
+        // write_mutex.lock();
+        pc.write(imuData, sizeof(imuData));
+        // write_mutex.unlock();
         ThisThread::sleep_for(100ms);
     }
 }
@@ -128,27 +126,73 @@ void thread_encoderSend() {
     while(true) {
         updateSpeed(speed1_rpm, speed2_rpm);
         PacketInfo encoderPacket = msg_encoder_encode(speed2_rpm, speed1_rpm);
-        uint8_t encodeData[12];
+        uint8_t encodeData[REDSHELL_MESSAGE_SIZE];
         serialize(encoderPacket, encodeData);
-        mutex.lock();
-        fwrite(encodeData, 1, sizeof(encodeData), stdout);
-        mutex.unlock();
+        // write_mutex.lock();
+        pc.write(encodeData, sizeof(encodeData));
+        // write_mutex.unlock();
         ThisThread::sleep_for(100ms);
     }
 }
 
-void thread_commandReceive() {
-    uint32_t speed1, speed2;
-    uint8_t speedData[12];
-    while (true) {
-        PacketInfo commandPacket = msg_command_encode(speed1, speed2);
-        serialize(commandPacket, speedData);
-        mutex.lock();
-        fread(speedData, 1, sizeof(speedData), stdin);
-        mutex.unlock();
-        msg_command_decode(commandPacket, &speed1, &speed2);
-    }
+static constexpr int32_t sign(const float x) {
+    return (0 < x) - (x < 0);
+}
 
+static constexpr float clamp(const float value, const  float low, const  float high) {
+    return std::max(std::min(value, high), low);
+}
+
+void thread_commandReceive() {
+    int32_t speed1, speed2;
+    char readBuff[1];
+    char cmdData[12];
+    uint8_t cmdIndex = 0;
+    bool is_reading = false;
+
+    int32_t last_received_time_us = us_ticker_read();
+
+    while (true) {
+        pc.read(readBuff, 1);
+
+        if (readBuff[0] == REDSHELL_START_BYTE)
+        {
+            cmdIndex = 0;
+            is_reading = true;
+        }
+
+        if (is_reading)
+        {
+            cmdData[cmdIndex] = readBuff[0];
+            cmdIndex++;
+
+            if (cmdIndex >= REDSHELL_MESSAGE_SIZE)
+            {
+                is_reading = false;
+
+                PacketInfo commandPacket;
+                deserialize(&commandPacket, (uint8_t*)cmdData);
+                msg_command_decode(commandPacket, &speed1, &speed2);
+
+                const float a_speed_magnitude = clamp(std::abs(static_cast<float>(speed1) * 0.01), 0.0, 1.0);
+                const float a_speed_dir = sign(speed1);
+                motorA(a_speed_magnitude, a_speed_dir);
+
+                const float b_speed_magnitude = clamp(std::abs(static_cast<float>(speed2) * 0.01), 0.0, 1.0);
+                const float b_speed_dir = sign(speed2);
+                motorB(b_speed_magnitude, b_speed_dir);
+
+                last_received_time_us = us_ticker_read();
+            }
+        }
+
+        static constexpr double timeout_us = 5e5;
+        if ((us_ticker_read() - last_received_time_us) > timeout_us)
+        {
+            motorA(0.0, 0);
+            motorB(0.0, 0);
+        }
+    }
 }
 
 void updateMotorPosition1() {
@@ -189,47 +233,47 @@ void updateSpeed(double &speed1_rpm, double &speed2_rpm) {
     lastTime_us = currentTime_us;
 }
 
-void readInput() {
-    while (!pc.readable()) {
-        char c;
-        if (pc.read(&c, 1)) {
-            // Check for end of line
-            if (c == '\n' || c == '\r') {
-                buffer[buffer_index] = '\0'; // Null-terminate the string
-                printf("Received string: %s\n", buffer);
-                setSpeedM1M2(buffer);
-                buffer_index = 0; // Reset buffer index
-            } else {
-                if (buffer_index < BUFFER_SIZE - 1) {
-                    buffer[buffer_index++] = c; // Add character to buffer
-                } else {
-                    // Buffer overflow handling
-                    printf("Buffer overflow, clearing buffer\n");
-                    buffer_index = 0;
-                }
-            }
-        }
-    }
-}
+// void readInput() {
+//     while (!pc.readable()) {
+//         char c;
+//         if (pc.read(&c, 1)) {
+//             // Check for end of line
+//             if (c == '\n' || c == '\r') {
+//                 buffer[buffer_index] = '\0'; // Null-terminate the string
+//                 printf("Received string: %s\n", buffer);
+//                 setSpeedM1M2(buffer);
+//                 buffer_index = 0; // Reset buffer index
+//             } else {
+//                 if (buffer_index < BUFFER_SIZE - 1) {
+//                     buffer[buffer_index++] = c; // Add character to buffer
+//                 } else {
+//                     // Buffer overflow handling
+//                     printf("Buffer overflow, clearing buffer\n");
+//                     buffer_index = 0;
+//                 }
+//             }
+//         }
+//     }
+// }
 
-void setSpeedM1M2(char input[]) {
-    float duty = input[3];
-    if (input[0] == '=') {
-        if (input[1] == 'L') {
-            if (input[2] == 'F') {
-                motorA(stringToInt(input), 1);
-            } else if (input[2] == 'B') {
-                motorA(stringToInt(input), -1);
-            }
-        } else if (input[1] == 'R') {
-            if (input[2] == 'F') {
-                motorB(stringToInt(input), 1);
-            } else if (input[2] == 'B') {
-                motorB(stringToInt(input), -1);
-            }
-        }
-    }
-}
+// void setSpeedM1M2(char input[]) {
+//     float duty = input[3];
+//     if (input[0] == '=') {
+//         if (input[1] == 'L') {
+//             if (input[2] == 'F') {
+//                 motorA(stringToInt(input), 1);
+//             } else if (input[2] == 'B') {
+//                 motorA(stringToInt(input), -1);
+//             }
+//         } else if (input[1] == 'R') {
+//             if (input[2] == 'F') {
+//                 motorB(stringToInt(input), 1);
+//             } else if (input[2] == 'B') {
+//                 motorB(stringToInt(input), -1);
+//             }
+//         }
+//     }
+// }
 
 int stringToInt(char data[]) {
     char *ptr;
@@ -256,6 +300,12 @@ void motorA(float duty, int dir) {
                 enableA.write(duty);
                 break;
             }
+            default: {
+                IN1 = 0;
+                IN2 = 0;
+                enableA.write(0.0);
+                break;
+            }
         }
     }
 }
@@ -273,6 +323,12 @@ void motorB(float duty, int dir) {
                 IN3 = 0;
                 IN4 = 1;
                 enableB.write(duty);
+                break;
+            }
+            default: {
+                IN3 = 0;
+                IN4 = 0;
+                enableB.write(0.0);
                 break;
             }
         }
